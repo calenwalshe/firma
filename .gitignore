@@ -1,0 +1,48 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local notes — keep your private scratch out of the repo
+NOTES.local.md
+*.local.md
+.local/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
+
+# Bookkeeping data — typically not in the seed repo
+20-financial/books/
+20-financial/receipts/
+20-financial/statements/
+20-financial/*.csv
+20-financial/*.xlsx
+20-financial/*.numbers
+
+# Customer/sales data — typically tracked elsewhere
+70-sales/customers/*.md
+!70-sales/customers/_example.md
+
+# Generated / built artifacts
+_build/
+dist/
+node_modules/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+logs/

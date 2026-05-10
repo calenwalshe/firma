@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""labbook-commit — commit a unit of work in an atomic-lab.
+
+Stages everything in the lab dir, builds a commit message (default:
+diff-stat-derived; optional: a pluggable LLM synthesizer) from the
+staged diff + last N events.log lines + the most recent outbox file,
+and commits.
+
+The lab book IS the git log. See ADR 0003.
+
+Usage:
+    labbook-commit                   # auto-detect lab from cwd
+    labbook-commit <lab-name>        # explicit lab
+    labbook-commit --dry-run         # show synthesized message, do not commit
+    labbook-commit --message "..."   # skip synthesis; use given message body
+    labbook-commit --subject "labbook(foo): manual"  # override subject
+
+Configuration (env vars):
+    ATOMICLAB_ROOT       Path to the dir containing all labs (one git repo).
+                         Default: $PWD if it (or an ancestor) is a git repo.
+    ATOMICLAB_SYNTH      Optional path to a Python module exposing
+                         synthesize(lab_name, diff_stat, diff_body,
+                                    events_tail, latest_outbox_text)
+                         -> (subject, body). If unset, the helper uses
+                         a deterministic default (no LLM call).
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import importlib.util
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def labs_root() -> Path:
+    """Resolve $ATOMICLAB_ROOT, falling back to cwd if it's a git repo."""
+    env = os.environ.get("ATOMICLAB_ROOT")
+    if env:
+        return Path(env).expanduser().resolve()
+    # Fallback: walk up from cwd looking for a .git
+    cwd = Path.cwd().resolve()
+    for d in [cwd, *cwd.parents]:
+        if (d / ".git").exists():
+            return d
+    sys.exit(
+        "error: ATOMICLAB_ROOT is not set and no git repo found by walking "
+        "up from cwd. Set ATOMICLAB_ROOT to the dir containing your labs."
+    )
+
+
+EVENTS_TAIL = 12  # last N events.log lines to include as context
+SUBJECT_MAX = 70
+
+
+def find_lab_dir(arg: str | None, root: Path) -> Path:
+    """Locate the lab directory we're committing to.
+
+    Strategy:
+      1. If arg given: <root>/<arg>/ if it exists.
+      2. Else: walk up from cwd looking for a directory whose parent is <root>.
+    """
+    if arg:
+        d = root / arg
+        if not d.is_dir():
+            sys.exit(f"error: no such lab at {d}")
+        return d
+
+    cwd = Path.cwd().resolve()
+    try:
+        rel = cwd.relative_to(root)
+    except ValueError:
+        sys.exit(
+            f"error: not inside {root}; cd into a lab dir or pass <lab-name>"
+        )
+    parts = rel.parts
+    if not parts:
+        sys.exit(f"error: at {root} root, not in a specific lab; pass <lab-name>")
+    return root / parts[0]
+
+
+def git(args: list[str], root: Path, **kw) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(root)] + args,
+        capture_output=True,
+        text=True,
+        check=False,
+        **kw,
+    )
+
+
+def stage_lab(lab_dir: Path, root: Path) -> bool:
+    """Stage everything under the lab dir. Returns True if anything is staged."""
+    rel = lab_dir.relative_to(root)
+    git(["add", "-A", str(rel)], root)
+    diff = git(["diff", "--cached", "--name-only", "--", str(rel)], root)
+    return bool(diff.stdout.strip())
+
+
+def staged_diff_stat(lab_dir: Path, root: Path) -> str:
+    rel = lab_dir.relative_to(root)
+    return git(["diff", "--cached", "--stat", "--", str(rel)], root).stdout
+
+
+def staged_diff_body(lab_dir: Path, root: Path, max_chars: int = 6000) -> str:
+    rel = lab_dir.relative_to(root)
+    body = git(["diff", "--cached", "--unified=2", "--", str(rel)], root).stdout
+    if len(body) > max_chars:
+        body = body[:max_chars] + "\n[...diff truncated...]"
+    return body
+
+
+def tail_events_log(lab_dir: Path, n: int = EVENTS_TAIL) -> str:
+    p = lab_dir / "events.log"
+    if not p.exists():
+        return "(no events.log)"
+    lines = p.read_text().splitlines()
+    return "\n".join(lines[-n:])
+
+
+def latest_outbox(lab_dir: Path) -> str:
+    outbox = lab_dir / "outbox"
+    if not outbox.is_dir():
+        return ""
+    files = sorted(outbox.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        return ""
+    text = files[0].read_text()
+    if len(text) > 2000:
+        text = text[:2000] + "\n[...truncated...]"
+    return f"## Latest outbox: {files[0].name}\n{text}"
+
+
+def default_synthesize(
+    lab_name: str,
+    diff_stat: str,
+    diff_body: str,  # noqa: ARG001
+    events_tail: str,  # noqa: ARG001
+    latest_outbox_text: str,  # noqa: ARG001
+) -> tuple[str, str]:
+    """Deterministic default — no LLM. Subject = last stat line summary."""
+    stat_lines = [line for line in diff_stat.strip().splitlines() if line]
+    summary = stat_lines[-1] if stat_lines else "unit of work"
+    subject = f"labbook({lab_name}): {summary}"
+    if len(subject) > SUBJECT_MAX + 20:
+        subject = subject[: SUBJECT_MAX]
+    body = diff_stat.strip()
+    return subject, body
+
+
+def load_pluggable_synth() -> object | None:
+    """Load the optional pluggable synth module from $ATOMICLAB_SYNTH.
+
+    The module must expose:
+        synthesize(lab_name, diff_stat, diff_body, events_tail, latest_outbox_text)
+            -> (subject, body)
+    """
+    spec_target = os.environ.get("ATOMICLAB_SYNTH")
+    if not spec_target:
+        return None
+    # Either an importable module name or a path-to-a-.py
+    if spec_target.endswith(".py") or "/" in spec_target:
+        path = Path(spec_target).expanduser().resolve()
+        if not path.exists():
+            print(
+                f"warning: ATOMICLAB_SYNTH points at {path} which does not exist; "
+                "falling back to default synth.",
+                file=sys.stderr,
+            )
+            return None
+        spec = importlib.util.spec_from_file_location("atomiclab_synth", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    try:
+        return importlib.import_module(spec_target)
+    except ImportError as e:
+        print(
+            f"warning: cannot import ATOMICLAB_SYNTH={spec_target!r}: {e}; "
+            "falling back to default synth.",
+            file=sys.stderr,
+        )
+        return None
+
+
+def synthesize_message(lab_name: str, lab_dir: Path, root: Path) -> tuple[str, str]:
+    diff_stat = staged_diff_stat(lab_dir, root)
+    diff_body = staged_diff_body(lab_dir, root)
+    events_tail = tail_events_log(lab_dir)
+    latest = latest_outbox(lab_dir)
+
+    plugin = load_pluggable_synth()
+    if plugin is not None and hasattr(plugin, "synthesize"):
+        try:
+            return plugin.synthesize(lab_name, diff_stat, diff_body, events_tail, latest)
+        except Exception as e:  # pragma: no cover
+            print(
+                f"warning: ATOMICLAB_SYNTH.synthesize raised "
+                f"{type(e).__name__}: {e}; falling back to default.",
+                file=sys.stderr,
+            )
+
+    return default_synthesize(lab_name, diff_stat, diff_body, events_tail, latest)
+
+
+def commit(subject: str, body: str, root: Path) -> str:
+    msg = subject + ("\n\n" + body if body else "")
+    res = git(["commit", "-m", msg], root)
+    if res.returncode != 0:
+        sys.exit(f"git commit failed:\n{res.stdout}\n{res.stderr}")
+    sha = git(["rev-parse", "--short", "HEAD"], root).stdout.strip()
+    return sha
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("lab_name", nargs="?", default=None,
+                   help="Lab name; auto-detected from cwd if omitted")
+    p.add_argument("--dry-run", action="store_true",
+                   help="Show synthesized message but do not commit")
+    p.add_argument("--message", default=None,
+                   help="Override synthesis with this body (subject still computed)")
+    p.add_argument("--subject", default=None,
+                   help="Override synthesis with this subject too")
+    args = p.parse_args()
+
+    root = labs_root()
+    if not (root / ".git").exists():
+        sys.exit(f"error: {root} is not a git repo (run `git init` there first)")
+
+    lab_dir = find_lab_dir(args.lab_name, root)
+    lab_name = lab_dir.name
+
+    has_changes = stage_lab(lab_dir, root)
+    if not has_changes:
+        print(f"labbook-commit: no changes to commit in {lab_name}", file=sys.stderr)
+        return 0
+
+    if args.subject and args.message is not None:
+        subject, body = args.subject, args.message
+    else:
+        subject, body = synthesize_message(lab_name, lab_dir, root)
+        if args.subject:
+            subject = args.subject
+        if args.message is not None:
+            body = args.message
+
+    print(f"--- labbook-commit ({lab_name}) ---", file=sys.stderr)
+    print(subject, file=sys.stderr)
+    if body:
+        print("", file=sys.stderr)
+        print(body, file=sys.stderr)
+    print("---", file=sys.stderr)
+
+    if args.dry_run:
+        print("(dry-run, not committing)", file=sys.stderr)
+        # Unstage so we don't leave the index dirty
+        rel = lab_dir.relative_to(root)
+        git(["reset", "HEAD", "--", str(rel)], root)
+        return 0
+
+    sha = commit(subject, body, root)
+    print(f"committed {sha}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
