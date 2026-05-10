@@ -1,14 +1,19 @@
 # Worked example — Salt-Cellar Provisions (synthetic)
 
-This file is a **synthetic worked example** — what the seed looks
-like with placeholders filled in. The venture named here ("Salt-Cellar
-Provisions") is fictional, chosen to be specific enough that the
-example reads like a real venture but distant enough from any real
-operation that no one mistakes it for an active business.
+This file is a **synthetic worked example** — what the scaffold looks
+like with placeholders filled in. The workspace named here
+("Salt-Cellar Provisions") is fictional, chosen to be specific enough
+that the example reads like a real one but distant enough from any
+real operation that no one mistakes it for an active business.
+
+This particular example is shaped as a small commerce operation — one
+pattern. The same scaffold instantiates differently for a research
+project, a service practice, a side build, or any other complex
+workspace; the layer set adapts to what the workspace actually needs.
 
 The example fills in CHARTER.md and the founding ADR end-to-end, then
 walks through what got filled in — and what got deferred — across
-each of the nine layers on day 0.
+each of the nine layers on setup day.
 
 ---
 

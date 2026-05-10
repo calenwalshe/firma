@@ -7,8 +7,8 @@ review_cadence: quarterly
 
 # {{COMPANY_NAME}} — Charter
 
-This is the document everything else in this company must be consistent
-with. Edits require an ADR (`decisions/`).
+This is the document everything else in this workspace must be
+consistent with. Edits require an ADR (`decisions/`).
 
 ---
 
@@ -28,7 +28,7 @@ answer to "why are we doing this?"
 Paragraph 1 — what's the problem we're addressing? Who has it? Why is
 the status quo not working?
 
-Paragraph 2 — why is this company (this team, this timeline, this
+Paragraph 2 — why is this workspace (this team, this timeline, this
 surface) the right shape to address it?
 
 (Replace these two paragraphs with the real answers.)
@@ -83,31 +83,32 @@ so explicitly here and add an ADR documenting why.
 
 ## Sunset
 
-This company has a sunset condition. Pick one of:
+This workspace has a sunset condition. Pick one of:
 
 - **Time-bound:** wind down on or before {{SUNSET_DATE}}.
 - **Outcome-bound:** wind down if {{SUNSET_OUTCOME}} is not met by
   {{SUNSET_CHECK_DATE}}.
-- **Disprove-bound (90-day default for pre-revenue):** the company
-  closes on {{LAUNCH_DATE + 90 days}} unless one of these has happened:
-  - {{First paying customer signed.}}
+- **Disprove-bound (90-day default for pre-result work):** the
+  workspace closes on {{LAUNCH_DATE + 90 days}} unless one of these
+  has happened:
+  - {{First counterparty engaged / first paying customer signed.}}
   - {{First contracted output delivered to a real outside party.}}
   - {{Quantitative signal that the disprove condition was wrong; if
     so, draft a new CHARTER and reset the clock — recorded as ADR.}}
 
-If this company genuinely should not have a sunset (an established,
-revenue-generating going concern; a multigenerational family business),
-delete this section AND record the reasoning in
-`decisions/0001-founding.md` § Sunset.
+If this workspace genuinely should not have a sunset (an established,
+revenue-generating going concern; a multigenerational operation; an
+ongoing research line), delete this section AND record the reasoning
+in `decisions/0001-founding.md` § Sunset.
 
-The sunset is the forcing function. A company without a forcing
+The sunset is the forcing function. A workspace without a forcing
 function tends to drift.
 
 ---
 
 ## Constraints (always live)
 
-5–10 constraints that this company commits to upfront. These are
+5–10 constraints that this workspace commits to upfront. These are
 load-bearing — every operational decision must be consistent with
 them.
 
@@ -132,5 +133,5 @@ Examples (don't copy; replace with your own):
 ## What this document is
 
 The CHARTER. Edits require an ADR. If you find yourself wanting to
-edit it often, the company's shape is wrong — name what changed and
+edit it often, the workspace's shape is wrong — name what changed and
 why in an ADR.
